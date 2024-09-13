@@ -29,7 +29,7 @@ func TestNewList(t *testing.T) {
 	assert.Equal(t, 1000, list.Length())
 	assert.GreaterOrEqual(t, list.MinSize().Width, template.MinSize().Width)
 	assert.Equal(t, list.MinSize(), template.MinSize().Max(test.TempWidgetRenderer(t, list).(*listRenderer).scroller.MinSize()))
-	assert.Equal(t, float32(0), list.offsetY)
+	assert.Equal(t, float32(0), list.offset)
 }
 
 func TestNewListWithData(t *testing.T) {
@@ -52,7 +52,7 @@ func TestNewListWithData(t *testing.T) {
 	assert.Equal(t, 1000, list.Length())
 	assert.GreaterOrEqual(t, list.MinSize().Width, template.MinSize().Width)
 	assert.Equal(t, list.MinSize(), template.MinSize().Max(test.TempWidgetRenderer(t, list).(*listRenderer).scroller.MinSize()))
-	assert.Equal(t, float32(0), list.offsetY)
+	assert.Equal(t, float32(0), list.offset)
 }
 
 func TestList_MinSize(t *testing.T) {
@@ -87,11 +87,11 @@ func TestList_Resize(t *testing.T) {
 	test.NewTempApp(t)
 	list, w := setupList(t)
 
-	assert.Equal(t, float32(0), list.offsetY)
+	assert.Equal(t, float32(0), list.offset)
 
 	w.Resize(fyne.NewSize(200, 600))
 
-	assert.Equal(t, float32(0), list.offsetY)
+	assert.Equal(t, float32(0), list.offset)
 	test.AssertRendersToMarkup(t, "list/resized.xml", w.Canvas())
 
 	// and check empty too
@@ -163,12 +163,12 @@ func TestList_OffsetChange(t *testing.T) {
 	w := test.NewTempWindow(t, list)
 	w.Resize(fyne.NewSize(200, 400))
 
-	assert.Equal(t, float32(0), list.offsetY)
+	assert.Equal(t, float32(0), list.offset)
 
 	scroll := test.TempWidgetRenderer(t, list).(*listRenderer).scroller
 	scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.NewDelta(0, -280)})
 
-	assert.NotEqual(t, 0, list.offsetY)
+	assert.NotEqual(t, 0, list.offset)
 	test.AssertRendersToMarkup(t, "list/offset_changed.xml", w.Canvas())
 }
 
@@ -189,35 +189,35 @@ func TestList_ScrollTo(t *testing.T) {
 	list := createList(1000)
 
 	offset := 0
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 
 	list.ScrollTo(20)
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 
 	offset = 6850
 	list.ScrollTo(200)
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 
 	offset = 38074
 	list.ScrollTo(999)
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 
 	offset = 19539
 	list.ScrollTo(500)
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 
 	list.ScrollTo(1000)
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 
 	offset = 39
 	list.ScrollTo(1)
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 }
 
@@ -226,7 +226,7 @@ func TestList_ScrollToBottom(t *testing.T) {
 
 	offset := 38074
 	list.ScrollToBottom()
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 }
 
@@ -235,7 +235,7 @@ func TestList_ScrollToTop(t *testing.T) {
 
 	offset := float32(0)
 	list.ScrollToTop()
-	assert.Equal(t, offset, list.offsetY)
+	assert.Equal(t, offset, list.offset)
 	assert.Equal(t, offset, list.scroller.Offset.Y)
 }
 
@@ -279,34 +279,34 @@ func TestList_Selection(t *testing.T) {
 	offset := 0
 	list.SetItemHeight(2, 220)
 	list.SetItemHeight(3, 220)
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 
 	list.Select(200)
 	offset = 7220
-	assert.Equal(t, offset, int(list.offsetY))
+	assert.Equal(t, offset, int(list.offset))
 	assert.Equal(t, offset, int(list.scroller.Offset.Y))
 }
 
 func TestList_Select(t *testing.T) {
 	list := createList(1000)
 
-	assert.Equal(t, float32(0), list.offsetY)
+	assert.Equal(t, float32(0), list.offset)
 	list.Select(50)
-	assert.Equal(t, 988, int(list.offsetY))
+	assert.Equal(t, 988, int(list.offset))
 	lo := list.scroller.Content.(*fyne.Container).Layout.(*listLayout)
 	visible50, _ := lo.searchVisible(lo.visible, 50)
 	assert.Equal(t, visible50.background.FillColor, theme.Color(theme.ColorNameSelection))
 	assert.True(t, visible50.background.Visible())
 
 	list.Select(5)
-	assert.Equal(t, 195, int(list.offsetY))
+	assert.Equal(t, 195, int(list.offset))
 	visible5, _ := lo.searchVisible(lo.visible, 5)
 	assert.Equal(t, visible5.background.FillColor, theme.Color(theme.ColorNameSelection))
 	assert.True(t, visible5.background.Visible())
 
 	list.Select(6)
-	assert.Equal(t, 195, int(list.offsetY))
+	assert.Equal(t, 195, int(list.offset))
 	visible5, _ = lo.searchVisible(lo.visible, 5)
 	visible6, _ := lo.searchVisible(lo.visible, 6)
 	assert.False(t, visible5.background.Visible())

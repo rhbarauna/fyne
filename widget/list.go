@@ -47,9 +47,10 @@ type List struct {
 	scroller      *widget.Scroll
 	selected      []ListItemID
 	itemMin       fyne.Size
-	itemHeights   map[ListItemID]float32
-	offsetY       float32
+	itemMeasures  map[ListItemID]float32
+	offset        float32
 	offsetUpdated func(fyne.Position)
+	orientation   Orientation
 }
 
 // NewList creates and returns a list widget for displaying items in
@@ -57,7 +58,7 @@ type List struct {
 //
 // Since: 1.4
 func NewList(length func() int, createItem func() fyne.CanvasObject, updateItem func(ListItemID, fyne.CanvasObject)) *List {
-	list := &List{Length: length, CreateItem: createItem, UpdateItem: updateItem}
+	list := &List{Length: length, CreateItem: createItem, UpdateItem: updateItem, orientation: Vertical}
 	list.ExtendBaseWidget(list)
 	return list
 }
@@ -82,18 +83,33 @@ func NewListWithData(data binding.DataList, createItem func() fyne.CanvasObject,
 	return l
 }
 
+func NewHorizontalList(length func() int, createItem func() fyne.CanvasObject, updateItem func(ListItemID, fyne.CanvasObject)) *List {
+	list := NewList(length, createItem, updateItem)
+	list.orientation = Horizontal
+	return list
+}
+
+func NewHorizontalListWithData(data binding.DataList, createItem func() fyne.CanvasObject, updateItem func(binding.DataItem, fyne.CanvasObject)) *List {
+	l := NewListWithData(data, createItem, updateItem)
+	l.orientation = Horizontal
+	return l
+}
+
 // CreateRenderer is a private method to Fyne which links this widget to its renderer.
 func (l *List) CreateRenderer() fyne.WidgetRenderer {
 	l.ExtendBaseWidget(l)
 
 	if f := l.CreateItem; f != nil && l.itemMin.IsZero() {
 		item := createItemAndApplyThemeScope(f, l)
-
 		l.itemMin = item.MinSize()
 	}
 
 	layout := &fyne.Container{Layout: newListLayout(l)}
-	l.scroller = widget.NewVScroll(layout)
+	if l.orientation == Horizontal {
+		l.scroller = widget.NewHScroll(layout)
+	} else {
+		l.scroller = widget.NewVScroll(layout)
+	}
 	layout.Resize(layout.MinSize())
 	objects := []fyne.CanvasObject{l.scroller}
 	return newListRenderer(objects, l, l.scroller, layout)
@@ -143,16 +159,21 @@ func (l *List) RefreshItem(id ListItemID) {
 // returned from the CreateItem callback. The height parameter uses the same units as a fyne.Size type and refers
 // to the internal content height not including the divider size.
 //
+// Deprecated: Use SetItemMeasure instead
 // Since: 2.3
 func (l *List) SetItemHeight(id ListItemID, height float32) {
+	l.SetItemMeasure(id, height)
+}
+
+func (l *List) SetItemMeasure(id ListItemID, measure float32) {
 	l.propertyLock.Lock()
 
-	if l.itemHeights == nil {
-		l.itemHeights = make(map[ListItemID]float32)
+	if l.itemMeasures == nil {
+		l.itemMeasures = make(map[ListItemID]float32)
 	}
 
-	refresh := l.itemHeights[id] != height
-	l.itemHeights[id] = height
+	refresh := l.itemMeasures[id] != measure
+	l.itemMeasures[id] = measure
 	l.propertyLock.Unlock()
 
 	if refresh {
@@ -166,26 +187,49 @@ func (l *List) scrollTo(id ListItemID) {
 	}
 
 	separatorThickness := l.Theme().Size(theme.SizeNamePadding)
-	y := float32(0)
-	lastItemHeight := l.itemMin.Height
-	if l.itemHeights == nil || len(l.itemHeights) == 0 {
-		y = (float32(id) * l.itemMin.Height) + (float32(id) * separatorThickness)
-	} else {
-		for i := 0; i < id; i++ {
-			height := l.itemMin.Height
-			if h, ok := l.itemHeights[i]; ok {
-				height = h
+	axis := float32(0)
+	lastItemMeasure := float32(0)
+	if l.orientation == Horizontal {
+		lastItemMeasure = l.itemMin.Width
+		if l.itemMeasures == nil || len(l.itemMeasures) == 0 {
+			axis = (float32(id) * l.itemMin.Width) + (float32(id) * separatorThickness)
+		} else {
+			for i := 0; i < id; i++ {
+				width := l.itemMin.Width
+				if w, ok := l.itemMeasures[i]; ok {
+					width = w
+				}
+
+				axis += width + separatorThickness
+				lastItemMeasure = width
 			}
-
-			y += height + separatorThickness
-			lastItemHeight = height
 		}
-	}
+		if axis < l.scroller.Offset.X {
+			l.scroller.Offset.X = axis
+		} else if axis+l.itemMin.Width > l.scroller.Offset.X+l.scroller.Size().Width {
+			l.scroller.Offset.X = axis + lastItemMeasure - l.scroller.Size().Width
+		}
+	} else {
+		lastItemMeasure = l.itemMin.Height
+		if l.itemMeasures == nil || len(l.itemMeasures) == 0 {
+			axis = (float32(id) * l.itemMin.Height) + (float32(id) * separatorThickness)
+		} else {
+			for i := 0; i < id; i++ {
+				height := l.itemMin.Height
+				if h, ok := l.itemMeasures[i]; ok {
+					height = h
+				}
 
-	if y < l.scroller.Offset.Y {
-		l.scroller.Offset.Y = y
-	} else if y+l.itemMin.Height > l.scroller.Offset.Y+l.scroller.Size().Height {
-		l.scroller.Offset.Y = y + lastItemHeight - l.scroller.Size().Height
+				axis += height + separatorThickness
+				lastItemMeasure = height
+			}
+		}
+
+		if axis < l.scroller.Offset.Y {
+			l.scroller.Offset.Y = axis
+		} else if axis+l.itemMin.Height > l.scroller.Offset.Y+l.scroller.Size().Height {
+			l.scroller.Offset.Y = axis + lastItemMeasure - l.scroller.Size().Height
+		}
 	}
 	l.offsetUpdated(l.scroller.Offset)
 }
@@ -243,9 +287,24 @@ func (l *List) ScrollTo(id ListItemID) {
 }
 
 // ScrollToBottom scrolls to the end of the list
-//
+// Deprecated: Use ScrollToEnd instead
 // Since: 2.1
 func (l *List) ScrollToBottom() {
+	l.ScrollToEnd()
+}
+
+// ScrollToTop scrolls to the start of the list
+//
+// Deprecated: Use ScrollToStart instead
+// Since: 2.1
+func (l *List) ScrollToTop() {
+	l.ScrollToStart()
+}
+
+// ScrollToEnd scrolls to the end of the list
+//
+// Since: 2.1
+func (l *List) ScrollToEnd() {
 	length := 0
 	if f := l.Length; f != nil {
 		length = f()
@@ -257,10 +316,10 @@ func (l *List) ScrollToBottom() {
 	l.Refresh()
 }
 
-// ScrollToTop scrolls to the start of the list
+// ScrollToStart scrolls to the beginning of the list
 //
 // Since: 2.1
-func (l *List) ScrollToTop() {
+func (l *List) ScrollToStart() {
 	l.scrollTo(0)
 	l.Refresh()
 }
@@ -275,14 +334,25 @@ func (l *List) ScrollToOffset(offset float32) {
 	if offset < 0 {
 		offset = 0
 	}
-	contentHeight := l.contentMinSize().Height
-	if l.Size().Height >= contentHeight {
+	var contentMeasure, viewSizeLimit float32
+	if l.orientation == Horizontal {
+		contentMeasure = l.contentMinSize().Width
+		viewSizeLimit = l.Size().Width
+	} else {
+		contentMeasure = l.contentMinSize().Height
+		viewSizeLimit = l.Size().Height
+	}
+	if viewSizeLimit >= contentMeasure {
 		return // content fully visible - no need to scroll
 	}
-	if offset > contentHeight {
-		offset = contentHeight
+	if offset > contentMeasure {
+		offset = contentMeasure
 	}
-	l.scroller.Offset.Y = offset
+	if l.orientation == Horizontal {
+		l.scroller.Offset.X = offset
+	} else {
+		l.scroller.Offset.Y = offset
+	}
 	l.offsetUpdated(l.scroller.Offset)
 	l.Refresh()
 }
@@ -291,7 +361,7 @@ func (l *List) ScrollToOffset(offset float32) {
 //
 // Since: 2.5
 func (l *List) GetScrollOffset() float32 {
-	return l.offsetY
+	return l.offset
 }
 
 // TypedKey is called if a key event happens while this List is focused.
@@ -366,83 +436,93 @@ func (l *List) contentMinSize() fyne.Size {
 		return fyne.NewSize(0, 0)
 	}
 	items := l.Length()
-
-	if l.itemHeights == nil || len(l.itemHeights) == 0 {
-		return fyne.NewSize(l.itemMin.Width,
-			(l.itemMin.Height+separatorThickness)*float32(items)-separatorThickness)
+	if l.itemMeasures == nil || len(l.itemMeasures) == 0 {
+		if l.orientation == Horizontal {
+			return fyne.NewSize((l.itemMin.Width+separatorThickness)*float32(items)-separatorThickness, l.itemMin.Height)
+		}
+		return fyne.NewSize(l.itemMin.Width, (l.itemMin.Height+separatorThickness)*float32(items)-separatorThickness)
 	}
-
-	height := float32(0)
+	measure := float32(0)
 	totalCustom := 0
-	templateHeight := l.itemMin.Height
-	for id, itemHeight := range l.itemHeights {
+	templateMeasure := l.itemMin.Height
+	if l.orientation == Horizontal {
+		templateMeasure = l.itemMin.Width
+	}
+	for id, itemMeasure := range l.itemMeasures {
 		if id < items {
 			totalCustom++
-			height += itemHeight
+			measure += itemMeasure
 		}
 	}
-	height += float32(items-totalCustom) * templateHeight
-
-	return fyne.NewSize(l.itemMin.Width, height+separatorThickness*float32(items-1))
+	measure += float32(items-totalCustom) * templateMeasure
+	calculatedMeasure := measure + separatorThickness*float32(items-1)
+	if l.orientation == Horizontal {
+		return fyne.NewSize(calculatedMeasure, l.itemMin.Height)
+	}
+	return fyne.NewSize(l.itemMin.Width, calculatedMeasure)
 }
 
 // fills l.visibleRowHeights and also returns offY and minRow
+// Drepecated: Use calculateVisibleItemMeasures instead
 func (l *listLayout) calculateVisibleRowHeights(itemHeight float32, length int, th fyne.Theme) (offY float32, minRow int) {
-	rowOffset := float32(0)
-	isVisible := false
-	l.visibleRowHeights = l.visibleRowHeights[:0]
-
-	if l.list.scroller.Size().Height <= 0 {
+	return l.calculateVisibleItemMeasures(itemHeight, length, th)
+}
+func (l *listLayout) calculateVisibleItemMeasures(itemMeasure float32, length int, th fyne.Theme) (off float32, minItem int) {
+	scrollerMeasure := l.list.scroller.Size().Height
+	if l.list.orientation == Horizontal {
+		scrollerMeasure = l.list.scroller.Size().Width
+	}
+	if scrollerMeasure <= 0 {
 		return
 	}
 
 	padding := th.Size(theme.SizeNamePadding)
-
-	if len(l.list.itemHeights) == 0 {
-		paddedItemHeight := itemHeight + padding
-
-		offY = float32(math.Floor(float64(l.list.offsetY/paddedItemHeight))) * paddedItemHeight
-		minRow = int(math.Floor(float64(offY / paddedItemHeight)))
-		maxRow := int(math.Ceil(float64((offY + l.list.scroller.Size().Height) / paddedItemHeight)))
-
-		if minRow > length-1 {
-			minRow = length - 1
+	l.visibleItemMeasures = l.visibleItemMeasures[:0]
+	if len(l.list.itemMeasures) == 0 {
+		paddedItemMeasure := itemMeasure + padding
+		off = float32(math.Floor(float64(l.list.offset/paddedItemMeasure))) * paddedItemMeasure
+		minItem = int(math.Floor(float64(off / paddedItemMeasure)))
+		maxItem := int(math.Ceil(float64((off + scrollerMeasure) / paddedItemMeasure)))
+		if minItem > length-1 {
+			minItem = length - 1
 		}
-		if minRow < 0 {
-			minRow = 0
-			offY = 0
+		if minItem < 0 {
+			minItem = 0
+			off = 0
 		}
 
-		if maxRow > length-1 {
-			maxRow = length - 1
+		if maxItem > length-1 {
+			maxItem = length - 1
 		}
 
-		for i := 0; i <= maxRow-minRow; i++ {
-			l.visibleRowHeights = append(l.visibleRowHeights, itemHeight)
+		for i := 0; i <= maxItem-minItem; i++ {
+			l.visibleItemMeasures = append(l.visibleItemMeasures, itemMeasure)
 		}
 		return
 	}
 
+	offset := float32(0)
+	isVisible := false
 	for i := 0; i < length; i++ {
-		height := itemHeight
-		if h, ok := l.list.itemHeights[i]; ok {
-			height = h
+		measure := itemMeasure
+		if m, ok := l.list.itemMeasures[i]; ok {
+			measure = m
 		}
 
-		if rowOffset <= l.list.offsetY-height-padding {
+		if offset <= l.list.offset-measure-padding {
 			// before scroll
-		} else if rowOffset <= l.list.offsetY {
-			minRow = i
-			offY = rowOffset
+		} else if offset <= l.list.offset {
+			minItem = i
+			off = offset
 			isVisible = true
 		}
-		if rowOffset >= l.list.offsetY+l.list.scroller.Size().Height {
+		if offset >= l.list.offset+scrollerMeasure {
 			break
 		}
 
-		rowOffset += height + padding
+		offset += measure + padding
 		if isVisible {
-			l.visibleRowHeights = append(l.visibleRowHeights, height)
+			l.visibleItemMeasures = append(l.visibleItemMeasures, measure)
 		}
 	}
 	return
@@ -611,11 +691,11 @@ type listLayout struct {
 	separators []fyne.CanvasObject
 	children   []fyne.CanvasObject
 
-	itemPool          syncPool
-	visible           []listItemAndID
-	slicePool         sync.Pool // *[]itemAndID
-	visibleRowHeights []float32
-	renderLock        sync.RWMutex
+	itemPool            syncPool
+	visible             []listItemAndID
+	slicePool           sync.Pool // *[]itemAndID
+	visibleItemMeasures []float32
+	renderLock          sync.RWMutex
 }
 
 func newListLayout(list *List) fyne.Layout {
@@ -649,10 +729,16 @@ func (l *listLayout) getItem() *listItem {
 }
 
 func (l *listLayout) offsetUpdated(pos fyne.Position) {
-	if l.list.offsetY == pos.Y {
+	offset := pos.Y
+	if l.list.orientation == Horizontal {
+		offset = pos.X
+	}
+
+	if l.list.offset == offset {
 		return
 	}
-	l.list.offsetY = pos.Y
+
+	l.list.offset = offset
 	l.updateList(true)
 }
 
@@ -693,7 +779,7 @@ func (l *listLayout) updateList(newOnly bool) {
 	th := l.list.Theme()
 	separatorThickness := th.Size(theme.SizeNamePadding)
 	l.renderLock.Lock()
-	width := l.list.Size().Width
+	measure := l.list.Size().Width
 	length := 0
 	if f := l.list.Length; f != nil {
 		length = f()
@@ -707,11 +793,17 @@ func (l *listLayout) updateList(newOnly bool) {
 	wasVisiblePtr := l.slicePool.Get().(*[]listItemAndID)
 	wasVisible := (*wasVisiblePtr)[:0]
 	wasVisible = append(wasVisible, l.visible...)
-
 	l.list.propertyLock.Lock()
-	offY, minRow := l.calculateVisibleRowHeights(l.list.itemMin.Height, length, th)
+	minItemMeasure := l.list.itemMin.Height
+
+	if l.list.orientation == Horizontal {
+		measure = l.list.Size().Height
+		minItemMeasure = l.list.itemMin.Width
+	}
+
+	off, minItem := l.calculateVisibleItemMeasures(minItemMeasure, length, th)
 	l.list.propertyLock.Unlock()
-	if len(l.visibleRowHeights) == 0 && length > 0 { // we can't show anything until we have some dimensions
+	if len(l.visibleItemMeasures) == 0 && length > 0 { // we can't show anything until we have some dimensions
 		l.renderLock.Unlock() // user code should not be locked
 		return
 	}
@@ -721,12 +813,17 @@ func (l *listLayout) updateList(newOnly bool) {
 	oldChildrenLen := len(l.children)
 	l.children = l.children[:0]
 
-	y := offY
-	for index, itemHeight := range l.visibleRowHeights {
-		row := index + minRow
-		size := fyne.NewSize(width, itemHeight)
+	axis := off
+	for index, itemMeasure := range l.visibleItemMeasures {
+		item := index + minItem
+		size := fyne.NewSize(measure, itemMeasure)
+		position := fyne.NewPos(0, axis)
+		if l.list.orientation == Horizontal {
+			size = fyne.NewSize(itemMeasure, measure)
+			position = fyne.NewPos(axis, 0)
+		}
 
-		c, ok := l.searchVisible(wasVisible, row)
+		c, ok := l.searchVisible(wasVisible, item)
 		if !ok {
 			c = l.getItem()
 			if c == nil {
@@ -735,11 +832,11 @@ func (l *listLayout) updateList(newOnly bool) {
 			c.Resize(size)
 		}
 
-		c.Move(fyne.NewPos(0, y))
+		c.Move(position)
 		c.Resize(size)
 
-		y += itemHeight + separatorThickness
-		l.visible = append(l.visible, listItemAndID{id: row, item: c})
+		axis += itemMeasure + separatorThickness
+		l.visible = append(l.visible, listItemAndID{id: item, item: c})
 		l.children = append(l.children, c)
 	}
 	l.nilOldSliceData(l.children, len(l.children), oldChildrenLen)
@@ -822,8 +919,15 @@ func (l *listLayout) updateSeparators() {
 		if i == 0 {
 			continue
 		}
-		l.separators[i].Move(fyne.NewPos(0, child.Position().Y-dividerOff))
-		l.separators[i].Resize(fyne.NewSize(l.list.Size().Width, separatorThickness))
+		position := fyne.NewPos(0, child.Position().Y-dividerOff)
+		size := fyne.NewSize(l.list.Size().Width, separatorThickness)
+		if l.list.orientation == Horizontal {
+			position = fyne.NewPos(child.Position().X-dividerOff, 0)
+			size = fyne.NewSize(separatorThickness, l.list.Size().Height)
+		}
+
+		l.separators[i].Move(position)
+		l.separators[i].Resize(size)
 		l.separators[i].Show()
 	}
 }
